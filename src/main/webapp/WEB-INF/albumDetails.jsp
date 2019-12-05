@@ -79,6 +79,7 @@
 
     <h3>Change cover</h3>
 
+
     <form action="/albums/${requestScope.album.id}/cover" method="POST" enctype="multipart/form-data">
         <input type="file" name="file" accept=".gif,.jpg,.jpeg,.png">
         <input type="submit" value="Upload">
