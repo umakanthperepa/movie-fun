@@ -1,22 +1,29 @@
 package org.superbiz.moviefun.albums;
 
 import org.apache.tika.Tika;
+import org.apache.tika.io.IOUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.superbiz.moviefun.blobstore.Blob;
+import org.superbiz.moviefun.blobstore.BlobStore;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
+import java.util.Optional;
 
 import static java.lang.ClassLoader.getSystemResource;
+import static java.lang.ClassLoader.getSystemResourceAsStream;
 import static java.lang.String.format;
 import static java.nio.file.Files.readAllBytes;
 
@@ -24,10 +31,14 @@ import static java.nio.file.Files.readAllBytes;
 @RequestMapping("/albums")
 public class AlbumsController {
 
+    private BlobStore blobStore;
+
+
     private final AlbumsBean albumsBean;
 
-    public AlbumsController(AlbumsBean albumsBean) {
+    public AlbumsController(AlbumsBean albumsBean, BlobStore blobStore) {
         this.albumsBean = albumsBean;
+        this.blobStore = blobStore;
     }
 
 
@@ -52,26 +63,41 @@ public class AlbumsController {
 
     @GetMapping("/{albumId}/cover")
     public HttpEntity<byte[]> getCover(@PathVariable long albumId) throws IOException, URISyntaxException {
-        Path coverFilePath = getExistingCoverPath(albumId);
-        byte[] imageBytes = readAllBytes(coverFilePath);
-        HttpHeaders headers = createImageHttpHeaders(coverFilePath, imageBytes);
+        Path coverFilePath= null;
+        Optional<Blob> image = blobStore.get(format("covers/%d", albumId));
+
+        Blob imageBlob = image.orElse(null);
+
+        byte[] imageBytes = null;
+
+        if (imageBlob != null){
+            coverFilePath = getCoverFile(albumId).toPath();
+            imageBytes = IOUtils.toByteArray(imageBlob.inputStream);
+        }else{
+            coverFilePath = getDefaultCover();
+            imageBytes = readAllBytes(coverFilePath);
+        }
+
+
+        //byte[]
+        HttpHeaders headers = createImageHttpHeaders(imageBytes);
 
         return new HttpEntity<>(imageBytes, headers);
     }
 
 
     private void saveUploadToFile(@RequestParam("file") MultipartFile uploadedFile, File targetFile) throws IOException {
-        targetFile.delete();
-        targetFile.getParentFile().mkdirs();
-        targetFile.createNewFile();
 
-        try (FileOutputStream outputStream = new FileOutputStream(targetFile)) {
-            outputStream.write(uploadedFile.getBytes());
-        }
+        String contentType = new Tika().detect(uploadedFile.getInputStream());
+        Blob blob = new Blob(targetFile.getPath(), uploadedFile.getInputStream(), contentType);
+
+        blobStore.put(blob);
+
+
     }
 
-    private HttpHeaders createImageHttpHeaders(Path coverFilePath, byte[] imageBytes) throws IOException {
-        String contentType = new Tika().detect(coverFilePath);
+    private HttpHeaders createImageHttpHeaders(byte[] imageBytes) throws IOException {
+        String contentType = new Tika().detect(imageBytes);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType(contentType));
@@ -84,16 +110,9 @@ public class AlbumsController {
         return new File(coverFileName);
     }
 
-    private Path getExistingCoverPath(@PathVariable long albumId) throws URISyntaxException {
-        File coverFile = getCoverFile(albumId);
-        Path coverFilePath;
-
-        if (coverFile.exists()) {
-            coverFilePath = coverFile.toPath();
-        } else {
-            coverFilePath = Paths.get(getSystemResource("default-cover.jpg").toURI());
-        }
-
-        return coverFilePath;
+    private Path getDefaultCover() throws URISyntaxException {
+        return Paths.get(this.getClass().getClassLoader().getResource("default-cover.jpg").toURI());
     }
+
+
 }
